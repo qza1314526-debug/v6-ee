@@ -7,9 +7,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/qza666/v6/internal/config"
-	"github.com/qza666/v6/internal/proxy"
-	"github.com/qza666/v6/internal/sysutils"
+	"github.com/qza1314526-debug/v6-ee/internal/config"
+	"github.com/qza1314526-debug/v6-ee/internal/proxy"
+	"github.com/qza1314526-debug/v6-ee/internal/sysutils"
 )
 
 func main() {

@@ -38,7 +38,7 @@
 
 \`\`\`bash
 # 下载安装脚本
-wget https://raw.githubusercontent.com/qza666/v6/main/install.sh
+wget https://raw.githubusercontent.com/qza1314526-debug/v6-ee/main/install.sh
 
 # 添加执行权限
 chmod +x install.sh
@@ -456,8 +456,8 @@ iptables -A INPUT -p tcp --dport 100 -j DROP
 
 \`\`\`bash
 # 克隆项目
-git clone https://github.com/qza666/v6.git
-cd v6
+git clone https://github.com/qza1314526-debug/v6-ee.git
+cd v6-ee
 
 # 安装依赖
 go mod tidy
@@ -485,14 +485,14 @@ go build -o ipv6proxy cmd/ipv6proxy/main.go
 如果您遇到问题，请：
 
 1. 查看本文档的故障排除部分
-2. 搜索已有的 [Issues](https://github.com/qza666/v6/issues)
+2. 搜索已有的 [Issues](https://github.com/qza1314526-debug/v6-ee/issues)
 3. 创建新的Issue并提供详细信息
 
 ## 📞 联系方式
 
-- **GitHub**: [qza666](https://github.com/qza666)
+- **GitHub**: [qza1314526-debug](https://github.com/qza1314526-debug)
 - **Email**: support@example.com
-- **文档**: [项目Wiki](https://github.com/qza666/v6/wiki)
+- **文档**: [项目Wiki](https://github.com/qza1314526-debug/v6-ee/wiki)
 
 ---
 

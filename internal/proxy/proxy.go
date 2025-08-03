@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/elazarl/goproxy"
-	"github.com/qza666/v6/internal/config"
+	"github.com/qza1314526-debug/v6-ee/internal/config"
 )
 
 func init() {
