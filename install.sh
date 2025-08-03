@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# IPv6代理服务器安装脚本 - 交互式版本
+# IPv6代理服务器安装脚本 - 支持多IPv4地址
 # 必须在交互式终端中运行
 
 # 检查是否为交互式终端
@@ -30,6 +30,9 @@ REPO_DIR="v6"
 TUNNEL_NAME="he-ipv6"
 CONFIG_DIR="/etc/he-ipv6"
 CONFIG_FILE="$CONFIG_DIR/$TUNNEL_NAME.conf"
+
+# 多IP配置数组
+declare -a MULTI_IPV4_ARRAY
 
 # 初始化安装环境
 init_environment() {
@@ -77,7 +80,6 @@ install_packages() {
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $packages
 }
-
 
 # 安装基本工具
 install_basic_tools() {
@@ -223,19 +225,154 @@ validate_ipv4() {
     return 1
 }
 
-# 验证IPv6地址
-validate_ipv6() {
-    local ip=$1
-    if [[ $ip =~ ^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$ ]]; then
-        return 0
+# 检测服务器所有IPv4地址
+detect_server_ipv4() {
+    echo "正在检测服务器IPv4地址..."
+    
+    # 获取所有网卡的IPv4地址
+    local all_ips=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1'))
+    
+    # 尝试获取公网IP
+    local public_ip=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || curl -s -4 --connect-timeout 5 icanhazip.com 2>/dev/null || echo "")
+    
+    echo "检测到的IPv4地址："
+    local i=1
+    for ip in "${all_ips[@]}"; do
+        echo "  $i) $ip (本地)"
+        ((i++))
+    done
+    
+    if [[ -n "$public_ip" && ! " ${all_ips[@]} " =~ " ${public_ip} " ]]; then
+        echo "  $i) $public_ip (公网)"
+        all_ips+=("$public_ip")
     fi
-    return 1
+    
+    echo "${all_ips[@]}"
 }
 
-# 生成本机IPv6地址
-generate_local_ipv6() {
-    local he_ipv6=$1
-    echo "${he_ipv6%::1}::2"
+# 配置多IPv4代理
+configure_multi_ipv4() {
+    echo "=== 多IPv4代理配置 ==="
+    
+    # 检测可用IP
+    local available_ips=($(detect_server_ipv4))
+    
+    if [ ${#available_ips[@]} -eq 0 ]; then
+        echo "错误: 未检测到可用的IPv4地址"
+        return 1
+    fi
+    
+    echo "检测到 ${#available_ips[@]} 个IPv4地址"
+    
+    # 强制使用交互式终端
+    exec < /dev/tty
+    
+    echo -n "是否配置多IPv4代理？(y/N): "
+    read use_multi_ip
+    
+    if [[ ! $use_multi_ip =~ ^[Yy]$ ]]; then
+        # 单IP模式
+        echo "选择单IP模式"
+        while true; do
+            echo "可用的IPv4地址："
+            for i in "${!available_ips[@]}"; do
+                echo "  $((i+1))) ${available_ips[i]}"
+            done
+            echo -n "请选择要使用的IPv4地址 [1]: "
+            read ip_choice
+            ip_choice=${ip_choice:-1}
+            
+            if [[ $ip_choice =~ ^[0-9]+$ ]] && [ $ip_choice -ge 1 ] && [ $ip_choice -le ${#available_ips[@]} ]; then
+                SINGLE_IPV4="${available_ips[$((ip_choice-1))]}"
+                echo "选择的IPv4地址: $SINGLE_IPV4"
+                break
+            else
+                echo "无效选择，请重新输入"
+            fi
+        done
+        return 0
+    fi
+    
+    # 多IP模式
+    echo "配置多IPv4代理模式"
+    echo "每个IPv4地址将在端口101上提供代理服务"
+    echo "使用哪个IP访问代理，就从哪个IP出去"
+    echo ""
+    
+    while true; do
+        echo "可用的IPv4地址："
+        for i in "${!available_ips[@]}"; do
+            local status=""
+            for selected_ip in "${MULTI_IPV4_ARRAY[@]}"; do
+                if [[ "$selected_ip" == "${available_ips[i]}" ]]; then
+                    status=" (已选择)"
+                    break
+                fi
+            done
+            echo "  $((i+1))) ${available_ips[i]}$status"
+        done
+        
+        echo ""
+        echo "已选择的IP地址: ${MULTI_IPV4_ARRAY[@]}"
+        echo ""
+        echo "选项："
+        echo "  1-${#available_ips[@]}) 选择/取消选择IP地址"
+        echo "  d) 完成选择"
+        echo "  q) 退出"
+        
+        echo -n "请输入选择: "
+        read choice
+        
+        case $choice in
+            [1-9]|[1-9][0-9])
+                if [ $choice -ge 1 ] && [ $choice -le ${#available_ips[@]} ]; then
+                    local selected_ip="${available_ips[$((choice-1))]}"
+                    
+                    # 检查是否已选择
+                    local found=false
+                    for i in "${!MULTI_IPV4_ARRAY[@]}"; do
+                        if [[ "${MULTI_IPV4_ARRAY[i]}" == "$selected_ip" ]]; then
+                            # 取消选择
+                            unset MULTI_IPV4_ARRAY[i]
+                            MULTI_IPV4_ARRAY=("${MULTI_IPV4_ARRAY[@]}")  # 重新索引数组
+                            echo "已取消选择: $selected_ip"
+                            found=true
+                            break
+                        fi
+                    done
+                    
+                    if [ "$found" = false ]; then
+                        # 添加选择
+                        MULTI_IPV4_ARRAY+=("$selected_ip")
+                        echo "已选择: $selected_ip"
+                    fi
+                else
+                    echo "无效选择"
+                fi
+                ;;
+            d|D)
+                if [ ${#MULTI_IPV4_ARRAY[@]} -eq 0 ]; then
+                    echo "错误: 至少需要选择一个IP地址"
+                else
+                    echo "完成选择，共选择了 ${#MULTI_IPV4_ARRAY[@]} 个IP地址"
+                    break
+                fi
+                ;;
+            q|Q)
+                echo "用户取消配置"
+                exit 1
+                ;;
+            *)
+                echo "无效选择"
+                ;;
+        esac
+        echo ""
+    done
+    
+    echo "多IPv4配置完成："
+    for ip in "${MULTI_IPV4_ARRAY[@]}"; do
+        echo "  - $ip:101"
+    done
 }
 
 # 检查系统内存
@@ -313,6 +450,12 @@ check_and_remove_existing_tunnel() {
             exit 1
         fi
     fi
+}
+
+# 生成本机IPv6地址
+generate_local_ipv6() {
+    local he_ipv6=$1
+    echo "${he_ipv6%::1}::2"
 }
 
 # 配置HE IPv6隧道
@@ -484,7 +627,25 @@ EOF
 # 创建系统服务
 create_service() {
     local ipv6_cidr="$1"
-    local real_ipv4="$2"
+    
+    # 构建命令行参数
+    local cmd_args="-cidr \"$ipv6_cidr\" -random-ipv6-port 100"
+    
+    if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
+        # 多IP模式
+        local multi_ip_str=""
+        for ip in "${MULTI_IPV4_ARRAY[@]}"; do
+            if [ -n "$multi_ip_str" ]; then
+                multi_ip_str="$multi_ip_str,$ip:101"
+            else
+                multi_ip_str="$ip:101"
+            fi
+        done
+        cmd_args="$cmd_args -multi-ipv4 \"$multi_ip_str\""
+    else
+        # 单IP模式
+        cmd_args="$cmd_args -real-ipv4-port 101 -real-ipv4 \"$SINGLE_IPV4\""
+    fi
     
     cat > /etc/systemd/system/ipv6proxy.service << EOF
 [Unit]
@@ -492,7 +653,7 @@ Description=IPv6 Proxy Service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/go/bin/go run /root/v6/cmd/ipv6proxy/main.go -cidr "$ipv6_cidr" -random-ipv6-port 100 -real-ipv4-port 101 -real-ipv4 "$real_ipv4"
+ExecStart=/usr/local/go/bin/go run /root/v6/cmd/ipv6proxy/main.go $cmd_args
 Restart=always
 User=root
 WorkingDirectory=/root/v6
@@ -549,8 +710,12 @@ main() {
     check_system_memory
     optimize_system_config
     
+    # 配置多IPv4代理
+    echo "=== 步骤7: 配置IPv4代理 ==="
+    configure_multi_ipv4
+    
     # 配置HE IPv6隧道
-    echo "=== 步骤7: 配置IPv6隧道 ==="
+    echo "=== 步骤8: 配置IPv6隧道 ==="
     echo "现在需要配置HE IPv6隧道，请准备好以下信息："
     echo "1. HE服务器IPv4地址 (从tunnelbroker.net获取)"
     echo "2. 本机IPv4地址 (服务器的公网IP)"
@@ -569,15 +734,14 @@ main() {
     if [ -f "$CONFIG_FILE" ]; then
         source "$CONFIG_FILE"
         ipv6_cidr="${ROUTED_PREFIX}/${PREFIX_LENGTH}"
-        real_ipv4="${LOCAL_IPV4}"
     else
         echo "错误：找不到隧道配置文件"
         exit 1
     fi
     
     # 创建并启动服务
-    echo "=== 步骤7: 创建系统服务 ==="
-    create_service "$ipv6_cidr" "$real_ipv4"
+    echo "=== 步骤9: 创建系统服务 ==="
+    create_service "$ipv6_cidr"
     
     # 显示完成信息
     echo -e "\n🎉 安装完成！使用说明："
@@ -585,9 +749,21 @@ main() {
 
 IPv6代理服务已配置完成。服务详情：
 - 随机IPv6代理端口：100
-- 真实IPv4代理端口：101
 - IPv6 CIDR：$ipv6_cidr
-- 真实IPv4地址：$real_ipv4
+
+EOF
+
+    if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
+        echo "多IPv4代理配置："
+        for ip in "${MULTI_IPV4_ARRAY[@]}"; do
+            echo "- IPv4代理: http://$ip:101 (出口IP: $ip)"
+        done
+    else
+        echo "单IPv4代理配置："
+        echo "- IPv4代理: http://$SINGLE_IPV4:101 (出口IP: $SINGLE_IPV4)"
+    fi
+
+    cat << EOF
 
 管理命令：
 1. 启动服务：systemctl start ipv6proxy
@@ -595,10 +771,6 @@ IPv6代理服务已配置完成。服务详情：
 3. 查看服务状态：systemctl status ipv6proxy
 4. 查看服务日志：journalctl -u ipv6proxy -f
 5. 停止服务：systemctl stop ipv6proxy
-
-手动测试：
-cd /root/v6
-go run cmd/ipv6proxy/main.go -cidr $ipv6_cidr -real-ipv4 $real_ipv4
 
 配置文件位置：
 - 隧道配置：$CONFIG_FILE
@@ -623,12 +795,27 @@ EOF
             echo "✅ 服务已成功启动并设置为开机自启！"
             echo ""
             echo "🌐 代理地址："
-            echo "  随机IPv6代理: http://$real_ipv4:100"
-            echo "  真实IPv4代理: http://$real_ipv4:101"
+            echo "  随机IPv6代理: http://任意IP:100"
+            
+            if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
+                for ip in "${MULTI_IPV4_ARRAY[@]}"; do
+                    echo "  IPv4代理($ip): http://$ip:101"
+                done
+            else
+                echo "  IPv4代理: http://$SINGLE_IPV4:101"
+            fi
+            
             echo ""
             echo "🧪 测试代理："
-            echo "  curl --proxy http://$real_ipv4:100 http://ipv6.icanhazip.com"
-            echo "  curl --proxy http://$real_ipv4:101 http://icanhazip.com"
+            echo "  curl --proxy http://任意IP:100 http://ipv6.icanhazip.com"
+            
+            if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
+                for ip in "${MULTI_IPV4_ARRAY[@]}"; do
+                    echo "  curl --proxy http://$ip:101 http://icanhazip.com  # 出口IP: $ip"
+                done
+            else
+                echo "  curl --proxy http://$SINGLE_IPV4:101 http://icanhazip.com"
+            fi
         else
             echo "❌ 服务启动失败，请检查日志："
             echo "journalctl -u ipv6proxy -n 50 --no-pager"

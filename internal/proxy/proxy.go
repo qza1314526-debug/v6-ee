@@ -78,6 +78,10 @@ func getIPv6Address(domain string) (string, error) {
 }
 
 func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpServer {
+	return NewProxyServerWithSpecificIP(cfg, useRandomIPv6, cfg.RealIPv4)
+}
+
+func NewProxyServerWithSpecificIP(cfg *config.Config, useRandomIPv6 bool, specificIPv4 string) *goproxy.ProxyHttpServer {
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = cfg.Verbose
 
@@ -122,8 +126,8 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 
 				log.Printf("CONNECT: %s [%s] from %s (CIDR: %s)", req.URL.Host, targetIP, outgoingIP.String(), cfg.CIDR)
 			} else {
-				outgoingIP = net.ParseIP(cfg.RealIPv4)
-				log.Printf("CONNECT: %s from real IPv4 %s", req.URL.Host, outgoingIP.String())
+				outgoingIP = net.ParseIP(specificIPv4)
+				log.Printf("CONNECT: %s from IPv4 %s", req.URL.Host, outgoingIP.String())
 			}
 
 			dialer := &net.Dialer{
@@ -168,8 +172,8 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 
 				log.Printf("HTTP: %s [%s] from %s (CIDR: %s)", req.URL.Host, targetIP, outgoingIP.String(), cfg.CIDR)
 			} else {
-				outgoingIP = net.ParseIP(cfg.RealIPv4)
-				log.Printf("HTTP: %s from real IPv4 %s", req.URL.Host, outgoingIP.String())
+				outgoingIP = net.ParseIP(specificIPv4)
+				log.Printf("HTTP: %s from IPv4 %s", req.URL.Host, outgoingIP.String())
 			}
 
 			dialer := &net.Dialer{
