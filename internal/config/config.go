@@ -17,7 +17,7 @@ type Config struct {
 	Verbose            bool
 	AuthConfig         AuthConfig
 	RealIPv4           string
-	MultiIPv4Config    []MultiIPConfig // 新增：多IP配置
+	MultiIPv4Config    []MultiIPConfig
 }
 
 type MultiIPConfig struct {

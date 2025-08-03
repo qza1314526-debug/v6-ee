@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# IPv6代理服务器安装脚本 - 支持多IPv4地址
+# IPv6代理服务器一键安装脚本
+# 支持单IPv4和多IPv4配置模式
 # 必须在交互式终端中运行
 
 # 检查是否为交互式终端
@@ -34,19 +35,35 @@ CONFIG_FILE="$CONFIG_DIR/$TUNNEL_NAME.conf"
 # 多IP配置数组
 declare -a MULTI_IPV4_ARRAY
 
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# 打印带颜色的消息
+print_message() {
+    local color=$1
+    local message=$2
+    echo -e "${color}${message}${NC}"
+}
+
 # 初始化安装环境
 init_environment() {
     mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
     exec 1> >(tee -a "$LOG_FILE")
     exec 2> >(tee -a "$LOG_FILE" >&2)
-    echo "安装开始时间: $(date)"
-    echo "正在初始化安装环境..."
+    print_message $BLUE "安装开始时间: $(date)"
+    print_message $BLUE "正在初始化安装环境..."
 }
 
 # 检查root权限
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo "错误: 请以root权限运行此脚本"
+        print_message $RED "错误: 请以root权限运行此脚本"
         exit 1
     fi
 }
@@ -56,7 +73,7 @@ check_network() {
     local test_hosts=("google.com" "github.com" "1.1.1.1")
     local success=0
     
-    echo "检查网络连接..."
+    print_message $BLUE "检查网络连接..."
     for host in "${test_hosts[@]}"; do
         if ping -c 1 -W 3 $host &>/dev/null; then
             success=1
@@ -65,7 +82,7 @@ check_network() {
     done
     
     if [ $success -eq 0 ]; then
-        echo "警告: 网络连接不稳定，这可能会影响安装过程"
+        print_message $YELLOW "警告: 网络连接不稳定，这可能会影响安装过程"
         read -p "是否继续？(y/n): " continue_setup
         if [[ $continue_setup != [yY] ]]; then
             exit 1
@@ -76,14 +93,14 @@ check_network() {
 # 检查并安装依赖
 install_packages() {
     local packages="$1"
-    echo "正在安装: $packages"
+    print_message $BLUE "正在安装: $packages"
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $packages
 }
 
 # 安装基本工具
 install_basic_tools() {
-    echo "检查并安装必要工具..."
+    print_message $BLUE "检查并安装必要工具..."
     local base_tools="curl wget"
     local dev_tools="build-essential git"
     local net_tools="ufw iproute2 net-tools"
@@ -105,10 +122,11 @@ install_basic_tools() {
     local required_tools="git curl wget"
     for tool in $required_tools; do
         if ! command -v $tool &>/dev/null; then
-            echo "错误: $tool 安装失败"
+            print_message $RED "错误: $tool 安装失败"
             exit 1
         fi
     done
+    print_message $GREEN "基本工具安装完成"
 }
 
 # 检查Go版本
@@ -116,7 +134,7 @@ check_go_version() {
     if command -v go &>/dev/null; then
         local current_version=$(go version | awk '{print $3}' | sed 's/go//')
         if [ "$(printf '%s\n' "$GO_VERSION" "$current_version" | sort -V | head -n1)" = "$GO_VERSION" ]; then
-            echo "检测到Go版本 $current_version，符合要求..."
+            print_message $GREEN "检测到Go版本 $current_version，符合要求..."
             return 0
         fi
     fi
@@ -126,88 +144,88 @@ check_go_version() {
 # 安装Go
 install_go() {
     if check_go_version; then
-        echo "Go版本检查通过，跳过安装"
+        print_message $GREEN "Go版本检查通过，跳过安装"
         return 0
     fi
 
-    echo "正在安装Go ${GO_VERSION}..."
+    print_message $BLUE "正在安装Go ${GO_VERSION}..."
     
     if [ ! -f "$TEMP_DIR/$GO_TAR" ]; then
-        echo "下载Go安装包..."
+        print_message $BLUE "下载Go安装包..."
         wget -P "$TEMP_DIR" "https://go.dev/dl/$GO_TAR" || {
-            echo "错误: 下载Go失败"
+            print_message $RED "错误: 下载Go失败"
             exit 1
         }
-        echo "Go安装包下载完成"
+        print_message $GREEN "Go安装包下载完成"
     fi
     
-    echo "删除旧的Go安装..."
+    print_message $BLUE "删除旧的Go安装..."
     rm -rf /usr/local/go
     
-    echo "解压Go安装包..."
+    print_message $BLUE "解压Go安装包..."
     tar -C /usr/local -xzf "$TEMP_DIR/$GO_TAR" || {
-        echo "错误: 解压Go失败"
+        print_message $RED "错误: 解压Go失败"
         exit 1
     }
-    echo "Go解压完成"
+    print_message $GREEN "Go解压完成"
     
-    echo "设置环境变量..."
+    print_message $BLUE "设置环境变量..."
     if ! grep -q "/usr/local/go/bin" /etc/profile; then
         echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
         echo 'export GO111MODULE=on' >> /etc/profile
-        echo "环境变量已添加到/etc/profile"
+        print_message $GREEN "环境变量已添加到/etc/profile"
     fi
     
     # 立即设置当前会话的环境变量
     export PATH=$PATH:/usr/local/go/bin
     export GO111MODULE=on
-    echo "当前会话环境变量已设置"
+    print_message $GREEN "当前会话环境变量已设置"
     
-    echo "验证Go安装..."
+    print_message $BLUE "验证Go安装..."
     if ! /usr/local/go/bin/go version; then
-        echo "错误: Go安装失败，无法执行go命令"
+        print_message $RED "错误: Go安装失败，无法执行go命令"
         exit 1
     fi
     
-    echo "Go安装成功完成"
+    print_message $GREEN "Go安装成功完成"
 }
 
 # 克隆或更新代码仓库
 clone_or_update_repo() {
-    echo "准备项目代码..."
+    print_message $BLUE "准备项目代码..."
     if [ -d "$REPO_DIR/.git" ]; then
-        echo "更新项目代码..."
+        print_message $BLUE "更新项目代码..."
         cd $REPO_DIR
         # 先获取远程信息
         git fetch origin 2>/dev/null || true
         # 获取默认分支
         DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
-        echo "检测到默认分支: $DEFAULT_BRANCH"
+        print_message $BLUE "检测到默认分支: $DEFAULT_BRANCH"
         
         # 尝试更新到默认分支
         if git show-ref --verify --quiet refs/remotes/origin/$DEFAULT_BRANCH; then
-            echo "切换到分支: $DEFAULT_BRANCH"
+            print_message $BLUE "切换到分支: $DEFAULT_BRANCH"
             git checkout -B $DEFAULT_BRANCH origin/$DEFAULT_BRANCH
         elif git show-ref --verify --quiet refs/remotes/origin/main; then
-            echo "切换到分支: main"
+            print_message $BLUE "切换到分支: main"
             git checkout -B main origin/main
         elif git show-ref --verify --quiet refs/remotes/origin/master; then
-            echo "切换到分支: master"
+            print_message $BLUE "切换到分支: master"
             git checkout -B master origin/master
         else
-            echo "错误: 找不到可用的分支"
+            print_message $RED "错误: 找不到可用的分支"
             exit 1
         fi
         cd ..
     else
-        echo "克隆项目代码..."
+        print_message $BLUE "克隆项目代码..."
         # 直接克隆，Git会自动选择默认分支
         if ! git clone --depth 1 $REPO_URL $REPO_DIR; then
-            echo "错误: 克隆项目失败"
+            print_message $RED "错误: 克隆项目失败"
             exit 1
         fi
     fi
-    echo "项目代码准备完成"
+    print_message $GREEN "项目代码准备完成"
 }
 
 # 验证IPv4地址
@@ -227,7 +245,7 @@ validate_ipv4() {
 
 # 检测服务器所有IPv4地址
 detect_server_ipv4() {
-    echo "正在检测服务器IPv4地址..."
+    print_message $BLUE "正在检测服务器IPv4地址..."
     
     # 获取所有网卡的IPv4地址
     local all_ips=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1'))
@@ -235,7 +253,7 @@ detect_server_ipv4() {
     # 尝试获取公网IP
     local public_ip=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || curl -s -4 --connect-timeout 5 icanhazip.com 2>/dev/null || echo "")
     
-    echo "检测到的IPv4地址："
+    print_message $CYAN "检测到的IPv4地址："
     local i=1
     for ip in "${all_ips[@]}"; do
         echo "  $i) $ip (本地)"
@@ -252,17 +270,17 @@ detect_server_ipv4() {
 
 # 配置多IPv4代理
 configure_multi_ipv4() {
-    echo "=== 多IPv4代理配置 ==="
+    print_message $PURPLE "=== 多IPv4代理配置 ==="
     
     # 检测可用IP
     local available_ips=($(detect_server_ipv4))
     
     if [ ${#available_ips[@]} -eq 0 ]; then
-        echo "错误: 未检测到可用的IPv4地址"
+        print_message $RED "错误: 未检测到可用的IPv4地址"
         return 1
     fi
     
-    echo "检测到 ${#available_ips[@]} 个IPv4地址"
+    print_message $GREEN "检测到 ${#available_ips[@]} 个IPv4地址"
     
     # 强制使用交互式终端
     exec < /dev/tty
@@ -272,9 +290,9 @@ configure_multi_ipv4() {
     
     if [[ ! $use_multi_ip =~ ^[Yy]$ ]]; then
         # 单IP模式
-        echo "选择单IP模式"
+        print_message $BLUE "选择单IP模式"
         while true; do
-            echo "可用的IPv4地址："
+            print_message $CYAN "可用的IPv4地址："
             for i in "${!available_ips[@]}"; do
                 echo "  $((i+1))) ${available_ips[i]}"
             done
@@ -284,23 +302,23 @@ configure_multi_ipv4() {
             
             if [[ $ip_choice =~ ^[0-9]+$ ]] && [ $ip_choice -ge 1 ] && [ $ip_choice -le ${#available_ips[@]} ]; then
                 SINGLE_IPV4="${available_ips[$((ip_choice-1))]}"
-                echo "选择的IPv4地址: $SINGLE_IPV4"
+                print_message $GREEN "选择的IPv4地址: $SINGLE_IPV4"
                 break
             else
-                echo "无效选择，请重新输入"
+                print_message $RED "无效选择，请重新输入"
             fi
         done
         return 0
     fi
     
     # 多IP模式
-    echo "配置多IPv4代理模式"
-    echo "每个IPv4地址将在端口101上提供代理服务"
-    echo "使用哪个IP访问代理，就从哪个IP出去"
+    print_message $BLUE "配置多IPv4代理模式"
+    print_message $YELLOW "每个IPv4地址将在端口101上提供代理服务"
+    print_message $YELLOW "使用哪个IP访问代理，就从哪个IP出去"
     echo ""
     
     while true; do
-        echo "可用的IPv4地址："
+        print_message $CYAN "可用的IPv4地址："
         for i in "${!available_ips[@]}"; do
             local status=""
             for selected_ip in "${MULTI_IPV4_ARRAY[@]}"; do
@@ -313,9 +331,9 @@ configure_multi_ipv4() {
         done
         
         echo ""
-        echo "已选择的IP地址: ${MULTI_IPV4_ARRAY[@]}"
+        print_message $GREEN "已选择的IP地址: ${MULTI_IPV4_ARRAY[@]}"
         echo ""
-        echo "选项："
+        print_message $CYAN "选项："
         echo "  1-${#available_ips[@]}) 选择/取消选择IP地址"
         echo "  d) 完成选择"
         echo "  q) 退出"
@@ -335,7 +353,7 @@ configure_multi_ipv4() {
                             # 取消选择
                             unset MULTI_IPV4_ARRAY[i]
                             MULTI_IPV4_ARRAY=("${MULTI_IPV4_ARRAY[@]}")  # 重新索引数组
-                            echo "已取消选择: $selected_ip"
+                            print_message $YELLOW "已取消选择: $selected_ip"
                             found=true
                             break
                         fi
@@ -344,32 +362,32 @@ configure_multi_ipv4() {
                     if [ "$found" = false ]; then
                         # 添加选择
                         MULTI_IPV4_ARRAY+=("$selected_ip")
-                        echo "已选择: $selected_ip"
+                        print_message $GREEN "已选择: $selected_ip"
                     fi
                 else
-                    echo "无效选择"
+                    print_message $RED "无效选择"
                 fi
                 ;;
             d|D)
                 if [ ${#MULTI_IPV4_ARRAY[@]} -eq 0 ]; then
-                    echo "错误: 至少需要选择一个IP地址"
+                    print_message $RED "错误: 至少需要选择一个IP地址"
                 else
-                    echo "完成选择，共选择了 ${#MULTI_IPV4_ARRAY[@]} 个IP地址"
+                    print_message $GREEN "完成选择，共选择了 ${#MULTI_IPV4_ARRAY[@]} 个IP地址"
                     break
                 fi
                 ;;
             q|Q)
-                echo "用户取消配置"
+                print_message $RED "用户取消配置"
                 exit 1
                 ;;
             *)
-                echo "无效选择"
+                print_message $RED "无效选择"
                 ;;
         esac
         echo ""
     done
     
-    echo "多IPv4配置完成："
+    print_message $GREEN "多IPv4配置完成："
     for ip in "${MULTI_IPV4_ARRAY[@]}"; do
         echo "  - $ip:101"
     done
@@ -377,7 +395,7 @@ configure_multi_ipv4() {
 
 # 检查系统内存
 check_system_memory() {
-    echo "检查系统内存..."
+    print_message $BLUE "检查系统内存..."
     local total_mem=$(free -m | awk '/^Mem:/{print $2}')
     local available_mem=$(free -m | awk '/^Mem:/{print $7}')
     
@@ -386,22 +404,22 @@ check_system_memory() {
         available_mem=$(free -m | awk '/^Mem:/{print $4}')
     fi
     
-    echo "总内存: ${total_mem}MB, 可用内存: ${available_mem}MB"
+    print_message $CYAN "总内存: ${total_mem}MB, 可用内存: ${available_mem}MB"
     
     if [ "$available_mem" -lt 256 ]; then
-        echo "警告: 系统可用内存不足 (${available_mem}MB)"
+        print_message $YELLOW "警告: 系统可用内存不足 (${available_mem}MB)"
         read -p "是否继续？(y/n): " continue_setup
         if [[ $continue_setup != [yY] ]]; then
             exit 1
         fi
     else
-        echo "内存检查通过"
+        print_message $GREEN "内存检查通过"
     fi
 }
 
 # 优化系统配置
 optimize_system_config() {
-    echo "优化系统配置..."
+    print_message $BLUE "优化系统配置..."
     local sysctl_file="/etc/sysctl.conf"
     local need_reload=0
     
@@ -417,36 +435,36 @@ optimize_system_config() {
         ["net.ipv6.neigh.default.gc_thresh3"]="4096"
     )
     
-    echo "配置系统参数..."
+    print_message $BLUE "配置系统参数..."
     for param in "${!params[@]}"; do
         if ! grep -q "^$param = ${params[$param]}$" $sysctl_file; then
             sed -i "/$param/d" $sysctl_file
             echo "$param = ${params[$param]}" >> $sysctl_file
             need_reload=1
-            echo "添加参数: $param = ${params[$param]}"
+            print_message $BLUE "添加参数: $param = ${params[$param]}"
         fi
     done
     
     if [ $need_reload -eq 1 ]; then
-        echo "重新加载系统参数..."
+        print_message $BLUE "重新加载系统参数..."
         sysctl -p &>/dev/null
     fi
-    echo "系统配置优化完成"
+    print_message $GREEN "系统配置优化完成"
 }
 
 # 检查并删除现有隧道
 check_and_remove_existing_tunnel() {
     if ip link show $TUNNEL_NAME &>/dev/null; then
-        echo "发现现有隧道 $TUNNEL_NAME"
+        print_message $YELLOW "发现现有隧道 $TUNNEL_NAME"
         read -p "是否删除现有隧道？(y/n): " confirm
         if [[ $confirm == [yY] ]]; then
-            echo "正在删除现有隧道..."
+            print_message $BLUE "正在删除现有隧道..."
             ip link set $TUNNEL_NAME down 2>/dev/null || true
             ip tunnel del $TUNNEL_NAME 2>/dev/null || true
             sed -i "/# HE IPv6 Tunnel.*$TUNNEL_NAME/,/# End IPv6 Tunnel/d" /etc/network/interfaces
-            echo "现有隧道已删除"
+            print_message $GREEN "现有隧道已删除"
         else
-            echo "用户取消操作"
+            print_message $RED "用户取消操作"
             exit 1
         fi
     fi
@@ -473,17 +491,21 @@ configure_he_tunnel() {
     # 强制使用交互式终端
     exec < /dev/tty
 
+    print_message $PURPLE "=== HE IPv6隧道配置 ==="
+    print_message $YELLOW "请准备好从 https://tunnelbroker.net 获取的隧道信息"
+    echo ""
+
     # 获取并验证HE服务器IPv4地址
     while true; do
         echo -n "请输入HE服务器IPv4地址: "
         read he_ipv4
         if validate_ipv4 "$he_ipv4"; then
-            echo "正在测试连接到 $he_ipv4..."
+            print_message $BLUE "正在测试连接到 $he_ipv4..."
             if ping -c 1 -W 3 "$he_ipv4" &>/dev/null; then
-                echo "连接测试成功"
+                print_message $GREEN "连接测试成功"
                 break
             else
-                echo "警告: 无法连接到服务器 $he_ipv4，但地址格式正确"
+                print_message $YELLOW "警告: 无法连接到服务器 $he_ipv4，但地址格式正确"
                 echo -n "是否继续使用此地址？(y/N): "
                 read confirm
                 if [[ $confirm =~ ^[Yy]$ ]]; then
@@ -491,12 +513,12 @@ configure_he_tunnel() {
                 fi
             fi
         else
-            echo "无效的IPv4地址格式，请重新输入"
+            print_message $RED "无效的IPv4地址格式，请重新输入"
         fi
     done
 
     # 获取并验证本机IPv4地址
-    echo "正在检测本机IPv4地址..."
+    print_message $BLUE "正在检测本机IPv4地址..."
     AUTO_LOCAL_IPV4=$(ip route get 8.8.8.8 | awk '{print $7; exit}' 2>/dev/null || curl -s -4 ifconfig.me 2>/dev/null || echo "")
     while true; do
         if [[ -n "$AUTO_LOCAL_IPV4" ]]; then
@@ -512,7 +534,7 @@ configure_he_tunnel() {
             if ip addr | grep -q "$local_ipv4" || [[ "$local_ipv4" == "$AUTO_LOCAL_IPV4" ]]; then
                 break
             else
-                echo "警告: 地址 $local_ipv4 可能不在本机网卡上"
+                print_message $YELLOW "警告: 地址 $local_ipv4 可能不在本机网卡上"
                 echo -n "是否继续使用此地址？(y/N): "
                 read confirm
                 if [[ $confirm =~ ^[Yy]$ ]]; then
@@ -520,7 +542,7 @@ configure_he_tunnel() {
                 fi
             fi
         else
-            echo "无效的IPv4地址格式，请重新输入"
+            print_message $RED "无效的IPv4地址格式，请重新输入"
         fi
     done
 
@@ -531,14 +553,14 @@ configure_he_tunnel() {
         if [[ $he_ipv6 =~ ^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}::1/[0-9]+$ ]]; then
             break
         fi
-        echo "无效的IPv6地址格式，请重新输入"
-        echo "示例格式: 2001:470:1f04:17b::1/64"
+        print_message $RED "无效的IPv6地址格式，请重新输入"
+        print_message $YELLOW "示例格式: 2001:470:1f04:17b::1/64"
     done
 
     # 生成本机IPv6地址
     local_ipv6=$(generate_local_ipv6 "${he_ipv6%/*}")
     local_ipv6="${local_ipv6}/${he_ipv6#*/}"
-    echo "本机IPv6地址: $local_ipv6"
+    print_message $GREEN "本机IPv6地址: $local_ipv6"
 
     # 获取并验证IPv6前缀
     while true; do
@@ -547,15 +569,15 @@ configure_he_tunnel() {
         if [[ $routed_prefix =~ ^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}::/[0-9]+$ ]]; then
             break
         fi
-        echo "无效的IPv6前缀格式，请重新输入"
-        echo "示例格式: 2001:470:1f05:17b::/64"
+        print_message $RED "无效的IPv6前缀格式，请重新输入"
+        print_message $YELLOW "示例格式: 2001:470:1f05:17b::/64"
     done
 
     prefix_length="${routed_prefix#*/}"
     routed_prefix="${routed_prefix%/*}"
     ping_ipv6="${routed_prefix%:*}:1"
 
-    echo "配置摘要:"
+    print_message $CYAN "配置摘要:"
     echo "  HE服务器IPv4: $he_ipv4"
     echo "  本机IPv4: $local_ipv4"
     echo "  HE服务器IPv6: ${he_ipv6%/*}"
@@ -564,14 +586,14 @@ configure_he_tunnel() {
     echo -n "确认配置并继续？(y/N): "
     read confirm
     if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        echo "用户取消配置"
+        print_message $RED "用户取消配置"
         return 1
     fi
 
     # 配置隧道
-    echo "正在配置隧道..."
+    print_message $BLUE "正在配置隧道..."
     ip tunnel add $TUNNEL_NAME mode sit remote $he_ipv4 local $local_ipv4 ttl 255 || {
-        echo "创建隧道失败"
+        print_message $RED "创建隧道失败"
         return 1
     }
 
@@ -613,14 +635,14 @@ iface $TUNNEL_NAME inet6 v4tunnel
 EOF
 
     # 测试连接
-    echo "测试IPv6连接..."
+    print_message $BLUE "测试IPv6连接..."
     if ping6 -c 3 -I $TUNNEL_NAME ${he_ipv6%/*} &>/dev/null; then
-        echo "IPv6隧道连接测试成功！"
+        print_message $GREEN "IPv6隧道连接测试成功！"
     else
-        echo "警告: IPv6隧道连接测试失败，但配置已保存"
+        print_message $YELLOW "警告: IPv6隧道连接测试失败，但配置已保存"
     fi
 
-    echo "IPv6隧道配置完成"
+    print_message $GREEN "IPv6隧道配置完成"
     return 0
 }
 
@@ -664,16 +686,60 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
+    print_message $GREEN "系统服务创建完成"
+}
+
+# 显示安装完成信息
+show_completion_info() {
+    local ipv6_cidr="$1"
+    
+    print_message $GREEN "🎉 安装完成！"
+    echo ""
+    print_message $CYAN "IPv6代理服务配置详情："
+    echo "- 随机IPv6代理端口：100"
+    echo "- IPv6 CIDR：$ipv6_cidr"
+    echo ""
+
+    if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
+        print_message $CYAN "多IPv4代理配置："
+        for ip in "${MULTI_IPV4_ARRAY[@]}"; do
+            echo "- IPv4代理: http://$ip:101 (出口IP: $ip)"
+        done
+    else
+        print_message $CYAN "单IPv4代理配置："
+        echo "- IPv4代理: http://$SINGLE_IPV4:101 (出口IP: $SINGLE_IPV4)"
+    fi
+
+    echo ""
+    print_message $PURPLE "管理命令："
+    echo "1. 启动服务：systemctl start ipv6proxy"
+    echo "2. 设置开机自启：systemctl enable ipv6proxy"
+    echo "3. 查看服务状态：systemctl status ipv6proxy"
+    echo "4. 查看服务日志：journalctl -u ipv6proxy -f"
+    echo "5. 停止服务：systemctl stop ipv6proxy"
+    echo ""
+    
+    print_message $PURPLE "配置文件位置："
+    echo "- 隧道配置：$CONFIG_FILE"
+    echo "- 服务配置：/etc/systemd/system/ipv6proxy.service"
+    echo ""
+    
+    print_message $YELLOW "如需修改配置，编辑相应文件后请运行："
+    echo "systemctl daemon-reload"
+    echo "systemctl restart ipv6proxy"
+    echo ""
 }
 
 # 主函数
 main() {
-    echo "开始安装IPv6 Proxy..."
+    print_message $PURPLE "🚀 IPv6代理服务器一键安装脚本"
+    print_message $PURPLE "支持单IPv4和多IPv4配置模式"
+    echo ""
     
     # 强制交互模式
     if [ ! -t 0 ]; then
-        echo "错误: 此脚本必须在交互式终端中运行"
-        echo "请下载脚本后直接执行："
+        print_message $RED "错误: 此脚本必须在交互式终端中运行"
+        print_message $YELLOW "请下载脚本后直接执行："
         echo "  wget https://raw.githubusercontent.com/qza666/v6/main/install.sh"
         echo "  chmod +x install.sh"
         echo "  sudo ./install.sh"
@@ -681,42 +747,35 @@ main() {
     fi
     
     # 初始化环境
-    echo "=== 步骤1: 初始化环境 ==="
+    print_message $PURPLE "=== 步骤1: 初始化环境 ==="
     init_environment
     check_root
     check_network
     
-    # Fix repository issues first
-    echo "=== 步骤2: 修复软件源 ==="
-    fix_repositories() {
-        echo "修复软件源功能未实现"
-    }
-    fix_repositories
-    
     # 先安装基本工具
-    echo "=== 步骤3: 安装基本工具 ==="
+    print_message $PURPLE "=== 步骤2: 安装基本工具 ==="
     install_basic_tools
     
     # 安装Go
-    echo "=== 步骤4: 安装Go语言 ==="
+    print_message $PURPLE "=== 步骤3: 安装Go语言 ==="
     install_go
     
     # 克隆代码
-    echo "=== 步骤5: 获取项目代码 ==="
+    print_message $PURPLE "=== 步骤4: 获取项目代码 ==="
     clone_or_update_repo
     
     # 继续其他配置
-    echo "=== 步骤6: 系统配置 ==="
+    print_message $PURPLE "=== 步骤5: 系统配置 ==="
     check_system_memory
     optimize_system_config
     
     # 配置多IPv4代理
-    echo "=== 步骤7: 配置IPv4代理 ==="
+    print_message $PURPLE "=== 步骤6: 配置IPv4代理 ==="
     configure_multi_ipv4
     
     # 配置HE IPv6隧道
-    echo "=== 步骤8: 配置IPv6隧道 ==="
-    echo "现在需要配置HE IPv6隧道，请准备好以下信息："
+    print_message $PURPLE "=== 步骤7: 配置IPv6隧道 ==="
+    print_message $YELLOW "现在需要配置HE IPv6隧道，请准备好以下信息："
     echo "1. HE服务器IPv4地址 (从tunnelbroker.net获取)"
     echo "2. 本机IPv4地址 (服务器的公网IP)"
     echo "3. HE服务器IPv6地址 (格式: xxxx:xxxx:xxxx:xxxx::1/64)"
@@ -726,7 +785,7 @@ main() {
     read
     
     if ! configure_he_tunnel; then
-        echo "隧道配置失败，请检查输入的信息是否正确"
+        print_message $RED "隧道配置失败，请检查输入的信息是否正确"
         exit 1
     fi
     
@@ -735,66 +794,30 @@ main() {
         source "$CONFIG_FILE"
         ipv6_cidr="${ROUTED_PREFIX}/${PREFIX_LENGTH}"
     else
-        echo "错误：找不到隧道配置文件"
+        print_message $RED "错误：找不到隧道配置文件"
         exit 1
     fi
     
     # 创建并启动服务
-    echo "=== 步骤9: 创建系统服务 ==="
+    print_message $PURPLE "=== 步骤8: 创建系统服务 ==="
     create_service "$ipv6_cidr"
     
     # 显示完成信息
-    echo -e "\n🎉 安装完成！使用说明："
-    cat << EOF
-
-IPv6代理服务已配置完成。服务详情：
-- 随机IPv6代理端口：100
-- IPv6 CIDR：$ipv6_cidr
-
-EOF
-
-    if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
-        echo "多IPv4代理配置："
-        for ip in "${MULTI_IPV4_ARRAY[@]}"; do
-            echo "- IPv4代理: http://$ip:101 (出口IP: $ip)"
-        done
-    else
-        echo "单IPv4代理配置："
-        echo "- IPv4代理: http://$SINGLE_IPV4:101 (出口IP: $SINGLE_IPV4)"
-    fi
-
-    cat << EOF
-
-管理命令：
-1. 启动服务：systemctl start ipv6proxy
-2. 设置开机自启：systemctl enable ipv6proxy
-3. 查看服务状态：systemctl status ipv6proxy
-4. 查看服务日志：journalctl -u ipv6proxy -f
-5. 停止服务：systemctl stop ipv6proxy
-
-配置文件位置：
-- 隧道配置：$CONFIG_FILE
-- 服务配置：/etc/systemd/system/ipv6proxy.service
-
-如需修改配置，编辑相应文件后请运行：
-systemctl daemon-reload
-systemctl restart ipv6proxy
-
-EOF
+    show_completion_info "$ipv6_cidr"
 
     # 询问是否启动服务
     echo -n "是否现在启动服务？(Y/n): "
     read start_service
     if [[ ! $start_service =~ ^[Nn]$ ]]; then
-        echo "正在启动服务..."
+        print_message $BLUE "正在启动服务..."
         systemctl start ipv6proxy
         systemctl enable ipv6proxy
         sleep 2
         
         if systemctl is-active ipv6proxy >/dev/null 2>&1; then
-            echo "✅ 服务已成功启动并设置为开机自启！"
+            print_message $GREEN "✅ 服务已成功启动并设置为开机自启！"
             echo ""
-            echo "🌐 代理地址："
+            print_message $CYAN "🌐 代理地址："
             echo "  随机IPv6代理: http://任意IP:100"
             
             if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
@@ -806,7 +829,7 @@ EOF
             fi
             
             echo ""
-            echo "🧪 测试代理："
+            print_message $CYAN "🧪 测试代理："
             echo "  curl --proxy http://任意IP:100 http://ipv6.icanhazip.com"
             
             if [ ${#MULTI_IPV4_ARRAY[@]} -gt 0 ]; then
@@ -817,15 +840,16 @@ EOF
                 echo "  curl --proxy http://$SINGLE_IPV4:101 http://icanhazip.com"
             fi
         else
-            echo "❌ 服务启动失败，请检查日志："
+            print_message $RED "❌ 服务启动失败，请检查日志："
             echo "journalctl -u ipv6proxy -n 50 --no-pager"
         fi
     fi
 
-    echo -e "\n✅ 安装和配置已完成。请检查上述信息，确保所有配置正确。"
-    echo "📋 安装日志保存在：$LOG_FILE"
     echo ""
-    echo "如有任何问题，请查看："
+    print_message $GREEN "✅ 安装和配置已完成。请检查上述信息，确保所有配置正确。"
+    print_message $BLUE "📋 安装日志保存在：$LOG_FILE"
+    echo ""
+    print_message $YELLOW "如有任何问题，请查看："
     echo "1. 服务日志: journalctl -u ipv6proxy -f"
     echo "2. 隧道状态: ip -6 addr show $TUNNEL_NAME"
     echo "3. 路由信息: ip -6 route show"
