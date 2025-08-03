@@ -176,25 +176,36 @@ clone_or_update_repo() {
     if [ -d "$REPO_DIR/.git" ]; then
         echo "更新项目代码..."
         cd $REPO_DIR
-        # 获取默认分支名称
-        DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5 2>/dev/null || echo "main")
-        if ! git fetch --depth 1 origin $DEFAULT_BRANCH 2>/dev/null; then
-            echo "尝试main分支..."
-            if ! git fetch --depth 1 origin main 2>/dev/null; then
-                echo "尝试master分支..."
-                git fetch --depth 1 origin master
-                git reset --hard origin/master
-            else
-                git reset --hard origin/main
-            fi
+        # 先获取远程信息
+        git fetch origin 2>/dev/null || true
+        # 获取默认分支
+        DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+        echo "检测到默认分支: $DEFAULT_BRANCH"
+        
+        # 尝试更新到默认分支
+        if git show-ref --verify --quiet refs/remotes/origin/$DEFAULT_BRANCH; then
+            echo "切换到分支: $DEFAULT_BRANCH"
+            git checkout -B $DEFAULT_BRANCH origin/$DEFAULT_BRANCH
+        elif git show-ref --verify --quiet refs/remotes/origin/main; then
+            echo "切换到分支: main"
+            git checkout -B main origin/main
+        elif git show-ref --verify --quiet refs/remotes/origin/master; then
+            echo "切换到分支: master"
+            git checkout -B master origin/master
         else
-            git reset --hard origin/$DEFAULT_BRANCH
+            echo "错误: 找不到可用的分支"
+            exit 1
         fi
         cd ..
     else
         echo "克隆项目代码..."
-        git clone --depth 1 $REPO_URL
+        # 直接克隆，Git会自动选择默认分支
+        if ! git clone --depth 1 $REPO_URL $REPO_DIR; then
+            echo "错误: 克隆项目失败"
+            exit 1
+        fi
     fi
+    echo "项目代码准备完成"
 }
 
 # 验证IPv4地址
