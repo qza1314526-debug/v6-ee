@@ -296,29 +296,53 @@ configure_he_tunnel() {
 
     # 获取并验证HE服务器IPv4地址
     while true; do
-        read -p "请输入HE服务器IPv4地址: " he_ipv4
-        if validate_ipv4 "$he_ipv4" && ping -c 1 -W 3 "$he_ipv4" &>/dev/null; then
-            break
+        echo -n "请输入HE服务器IPv4地址: " >&2
+        read he_ipv4 < /dev/tty
+        if validate_ipv4 "$he_ipv4"; then
+            echo "正在测试连接到 $he_ipv4..." >&2
+            if ping -c 1 -W 3 "$he_ipv4" &>/dev/null; then
+                break
+            else
+                echo "警告: 无法连接到服务器 $he_ipv4，但地址格式正确" >&2
+                echo -n "是否继续使用此地址？(y/N): " >&2
+                read confirm < /dev/tty
+                if [[ $confirm =~ ^[Yy]$ ]]; then
+                    break
+                fi
+            fi
+        else
+            echo "无效的IPv4地址格式，请重新输入" >&2
         fi
-        echo "无效的IPv4地址或无法连接到服务器，请重新输入"
     done
 
     # 获取并验证本机IPv4地址
     while true; do
-        read -p "请输入本机IPv4地址: " local_ipv4
-        if validate_ipv4 "$local_ipv4" && ip addr | grep -q "$local_ipv4"; then
-            break
+        echo -n "请输入本机IPv4地址: " >&2
+        read local_ipv4 < /dev/tty
+        if validate_ipv4 "$local_ipv4"; then
+            if ip addr | grep -q "$local_ipv4"; then
+                break
+            else
+                echo "警告: 地址 $local_ipv4 不在本机网卡上" >&2
+                echo -n "是否继续使用此地址？(y/N): " >&2
+                read confirm < /dev/tty
+                if [[ $confirm =~ ^[Yy]$ ]]; then
+                    break
+                fi
+            fi
+        else
+            echo "无效的IPv4地址格式，请重新输入" >&2
         fi
-        echo "无效的IPv4地址或地址不在本机网卡上，请重新输入"
     done
 
     # 获取并验证HE服务器IPv6地址
     while true; do
-        read -p "请输入HE服务器IPv6地址（包括前缀长度，如 2001:470:1f04:17b::1/64）: " he_ipv6
+        echo -n "请输入HE服务器IPv6地址（包括前缀长度，如 2001:470:1f04:17b::1/64）: " >&2
+        read he_ipv6 < /dev/tty
         if [[ $he_ipv6 =~ ^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}::1/[0-9]+$ ]]; then
             break
         fi
-        echo "无效的IPv6地址格式，请重新输入"
+        echo "无效的IPv6地址格式，请重新输入" >&2
     done
 
     # 生成本机IPv6地址
@@ -328,11 +352,12 @@ configure_he_tunnel() {
 
     # 获取并验证IPv6前缀
     while true; do
-        read -p "请输入HE分配的IPv6前缀（如 2001:470:1f05:17b::/64）: " routed_prefix
+        echo -n "请输入HE分配的IPv6前缀（如 2001:470:1f05:17b::/64）: " >&2
+        read routed_prefix < /dev/tty
         if [[ $routed_prefix =~ ^([0-9a-fA-F]{0,4}:){1,7}: ]]; then
             break
         fi
-        echo "无效的IPv6前缀格式，请重新输入"
+        echo "无效的IPv6前缀格式，请重新输入" >&2
     done
 
     prefix_length="${routed_prefix#*/}"
@@ -422,6 +447,27 @@ EOF
 main() {
     echo "开始安装IPv6 Proxy..."
     
+    # 检查是否为交互式终端
+    check_interactive() {
+        if [ ! -t 0 ]; then
+            echo "检测到非交互式环境，将使用默认配置模式" >&2
+            echo "如需交互式配置，请下载脚本后直接运行：" >&2
+            echo "wget https://raw.githubusercontent.com/qza666/v6/main/install.sh" >&2
+            echo "sudo bash install.sh" >&2
+            echo "" >&2
+            echo "按回车键继续使用默认配置，或按Ctrl+C取消..." >&2
+            read -t 10 < /dev/tty || echo "继续安装..." >&2
+            return 1
+        fi
+        return 0
+    }
+    
+    # 检查交互式环境
+    INTERACTIVE_MODE=true
+    if ! check_interactive; then
+        INTERACTIVE_MODE=false
+    fi
+    
     # 初始化环境
     echo "=== 步骤1: 初始化环境 ==="
     init_environment
@@ -454,9 +500,24 @@ main() {
     
     # 配置HE IPv6隧道
     echo "=== 步骤7: 配置IPv6隧道 ==="
-    if ! configure_he_tunnel; then
-        echo "隧道配置失败"
-        exit 1
+    if [ "$INTERACTIVE_MODE" = "true" ]; then
+        if ! configure_he_tunnel; then
+            echo "隧道配置失败"
+            exit 1
+        fi
+    else
+        echo "跳过隧道配置，请稍后手动配置"
+        # 创建默认配置文件
+        cat > "$CONFIG_FILE" << EOF
+# 请手动编辑此配置文件
+HE_SERVER_IPV4=请填写HE服务器IPv4地址
+HE_SERVER_IPV6=请填写HE服务器IPv6地址
+LOCAL_IPV4=请填写本机IPv4地址
+LOCAL_IPV6=请填写本机IPv6地址
+ROUTED_PREFIX=请填写路由前缀
+PREFIX_LENGTH=64
+PING_IPV6=请填写ping测试地址
+EOF
     fi
     # 从配置文件读取信息
     if [ -f "$CONFIG_FILE" ]; then
