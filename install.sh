@@ -1,5 +1,21 @@
 #!/bin/bash
 
+# IPv6代理服务器安装脚本 - 交互式版本
+# 必须在交互式终端中运行
+
+# 检查是否为交互式终端
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+    echo "❌ 错误: 此脚本必须在交互式终端中运行"
+    echo ""
+    echo "请使用以下方式运行："
+    echo "1. 下载脚本: wget https://raw.githubusercontent.com/qza666/v6/main/install.sh"
+    echo "2. 添加执行权限: chmod +x install.sh"
+    echo "3. 运行脚本: sudo ./install.sh"
+    echo ""
+    echo "❌ 不支持管道执行 (curl ... | bash)"
+    exit 1
+fi
+
 # 启用错误检查
 set -e
 
@@ -160,13 +176,19 @@ clone_or_update_repo() {
     if [ -d "$REPO_DIR/.git" ]; then
         echo "更新项目代码..."
         cd $REPO_DIR
-        # 首先尝试main分支，如果失败则尝试master分支
-        if ! git fetch --depth 1 origin main 2>/dev/null; then
-            echo "尝试master分支..."
-            git fetch --depth 1 origin master
-            git reset --hard origin/master
+        # 获取默认分支名称
+        DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5 2>/dev/null || echo "main")
+        if ! git fetch --depth 1 origin $DEFAULT_BRANCH 2>/dev/null; then
+            echo "尝试main分支..."
+            if ! git fetch --depth 1 origin main 2>/dev/null; then
+                echo "尝试master分支..."
+                git fetch --depth 1 origin master
+                git reset --hard origin/master
+            else
+                git reset --hard origin/main
+            fi
         else
-            git reset --hard origin/main
+            git reset --hard origin/$DEFAULT_BRANCH
         fi
         cd ..
     else
@@ -294,55 +316,69 @@ configure_he_tunnel() {
 
     check_and_remove_existing_tunnel
 
+    # 强制使用交互式终端
+    exec < /dev/tty
+
     # 获取并验证HE服务器IPv4地址
     while true; do
-        echo -n "请输入HE服务器IPv4地址: " >&2
-        read he_ipv4 < /dev/tty
+        echo -n "请输入HE服务器IPv4地址: "
+        read he_ipv4
         if validate_ipv4 "$he_ipv4"; then
-            echo "正在测试连接到 $he_ipv4..." >&2
+            echo "正在测试连接到 $he_ipv4..."
             if ping -c 1 -W 3 "$he_ipv4" &>/dev/null; then
+                echo "连接测试成功"
                 break
             else
-                echo "警告: 无法连接到服务器 $he_ipv4，但地址格式正确" >&2
-                echo -n "是否继续使用此地址？(y/N): " >&2
-                read confirm < /dev/tty
+                echo "警告: 无法连接到服务器 $he_ipv4，但地址格式正确"
+                echo -n "是否继续使用此地址？(y/N): "
+                read confirm
                 if [[ $confirm =~ ^[Yy]$ ]]; then
                     break
                 fi
             fi
         else
-            echo "无效的IPv4地址格式，请重新输入" >&2
+            echo "无效的IPv4地址格式，请重新输入"
         fi
     done
 
     # 获取并验证本机IPv4地址
+    echo "正在检测本机IPv4地址..."
+    AUTO_LOCAL_IPV4=$(ip route get 8.8.8.8 | awk '{print $7; exit}' 2>/dev/null || curl -s -4 ifconfig.me 2>/dev/null || echo "")
     while true; do
-        echo -n "请输入本机IPv4地址: " >&2
-        read local_ipv4 < /dev/tty
+        if [[ -n "$AUTO_LOCAL_IPV4" ]]; then
+            echo -n "请输入本机IPv4地址 [$AUTO_LOCAL_IPV4]: "
+        else
+            echo -n "请输入本机IPv4地址: "
+        fi
+        read local_ipv4
+        if [[ -z "$local_ipv4" && -n "$AUTO_LOCAL_IPV4" ]]; then
+            local_ipv4="$AUTO_LOCAL_IPV4"
+        fi
         if validate_ipv4 "$local_ipv4"; then
-            if ip addr | grep -q "$local_ipv4"; then
+            if ip addr | grep -q "$local_ipv4" || [[ "$local_ipv4" == "$AUTO_LOCAL_IPV4" ]]; then
                 break
             else
-                echo "警告: 地址 $local_ipv4 不在本机网卡上" >&2
-                echo -n "是否继续使用此地址？(y/N): " >&2
-                read confirm < /dev/tty
+                echo "警告: 地址 $local_ipv4 可能不在本机网卡上"
+                echo -n "是否继续使用此地址？(y/N): "
+                read confirm
                 if [[ $confirm =~ ^[Yy]$ ]]; then
                     break
                 fi
             fi
         else
-            echo "无效的IPv4地址格式，请重新输入" >&2
+            echo "无效的IPv4地址格式，请重新输入"
         fi
     done
 
     # 获取并验证HE服务器IPv6地址
     while true; do
-        echo -n "请输入HE服务器IPv6地址（包括前缀长度，如 2001:470:1f04:17b::1/64）: " >&2
-        read he_ipv6 < /dev/tty
+        echo -n "请输入HE服务器IPv6地址（包括前缀长度，如 2001:470:1f04:17b::1/64）: "
+        read he_ipv6
         if [[ $he_ipv6 =~ ^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}::1/[0-9]+$ ]]; then
             break
         fi
-        echo "无效的IPv6地址格式，请重新输入" >&2
+        echo "无效的IPv6地址格式，请重新输入"
+        echo "示例格式: 2001:470:1f04:17b::1/64"
     done
 
     # 生成本机IPv6地址
@@ -352,23 +388,37 @@ configure_he_tunnel() {
 
     # 获取并验证IPv6前缀
     while true; do
-        echo -n "请输入HE分配的IPv6前缀（如 2001:470:1f05:17b::/64）: " >&2
-        read routed_prefix < /dev/tty
-        if [[ $routed_prefix =~ ^([0-9a-fA-F]{0,4}:){1,7}: ]]; then
+        echo -n "请输入HE分配的IPv6前缀（如 2001:470:1f05:17b::/64）: "
+        read routed_prefix
+        if [[ $routed_prefix =~ ^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}::/[0-9]+$ ]]; then
             break
         fi
-        echo "无效的IPv6前缀格式，请重新输入" >&2
+        echo "无效的IPv6前缀格式，请重新输入"
+        echo "示例格式: 2001:470:1f05:17b::/64"
     done
 
     prefix_length="${routed_prefix#*/}"
     routed_prefix="${routed_prefix%/*}"
     ping_ipv6="${routed_prefix%:*}:1"
 
+    echo "配置摘要:"
+    echo "  HE服务器IPv4: $he_ipv4"
+    echo "  本机IPv4: $local_ipv4"
+    echo "  HE服务器IPv6: ${he_ipv6%/*}"
+    echo "  本机IPv6: ${local_ipv6%/*}"
+    echo "  路由前缀: $routed_prefix/$prefix_length"
+    echo -n "确认配置并继续？(y/N): "
+    read confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo "用户取消配置"
+        return 1
+    fi
+
     # 配置隧道
-    echo "配置隧道..."
+    echo "正在配置隧道..."
     ip tunnel add $TUNNEL_NAME mode sit remote $he_ipv4 local $local_ipv4 ttl 255 || {
         echo "创建隧道失败"
-        exit 1
+        return 1
     }
 
     ip link set $TUNNEL_NAME up
@@ -410,9 +460,10 @@ EOF
 
     # 测试连接
     echo "测试IPv6连接..."
-    if ! ping6 -c 3 -I $TUNNEL_NAME ${he_ipv6%/*} &>/dev/null; then
-        echo "警告: 无法连接到HE服务器"
-        return 1
+    if ping6 -c 3 -I $TUNNEL_NAME ${he_ipv6%/*} &>/dev/null; then
+        echo "IPv6隧道连接测试成功！"
+    else
+        echo "警告: IPv6隧道连接测试失败，但配置已保存"
     fi
 
     echo "IPv6隧道配置完成"
@@ -447,25 +498,14 @@ EOF
 main() {
     echo "开始安装IPv6 Proxy..."
     
-    # 检查是否为交互式终端
-    check_interactive() {
-        if [ ! -t 0 ]; then
-            echo "检测到非交互式环境，将使用默认配置模式" >&2
-            echo "如需交互式配置，请下载脚本后直接运行：" >&2
-            echo "wget https://raw.githubusercontent.com/qza666/v6/main/install.sh" >&2
-            echo "sudo bash install.sh" >&2
-            echo "" >&2
-            echo "按回车键继续使用默认配置，或按Ctrl+C取消..." >&2
-            read -t 10 < /dev/tty || echo "继续安装..." >&2
-            return 1
-        fi
-        return 0
-    }
-    
-    # 检查交互式环境
-    INTERACTIVE_MODE=true
-    if ! check_interactive; then
-        INTERACTIVE_MODE=false
+    # 强制交互模式
+    if [ ! -t 0 ]; then
+        echo "错误: 此脚本必须在交互式终端中运行"
+        echo "请下载脚本后直接执行："
+        echo "  wget https://raw.githubusercontent.com/qza666/v6/main/install.sh"
+        echo "  chmod +x install.sh"
+        echo "  sudo ./install.sh"
+        exit 1
     fi
     
     # 初始化环境
@@ -500,25 +540,20 @@ main() {
     
     # 配置HE IPv6隧道
     echo "=== 步骤7: 配置IPv6隧道 ==="
-    if [ "$INTERACTIVE_MODE" = "true" ]; then
-        if ! configure_he_tunnel; then
-            echo "隧道配置失败"
-            exit 1
-        fi
-    else
-        echo "跳过隧道配置，请稍后手动配置"
-        # 创建默认配置文件
-        cat > "$CONFIG_FILE" << EOF
-# 请手动编辑此配置文件
-HE_SERVER_IPV4=请填写HE服务器IPv4地址
-HE_SERVER_IPV6=请填写HE服务器IPv6地址
-LOCAL_IPV4=请填写本机IPv4地址
-LOCAL_IPV6=请填写本机IPv6地址
-ROUTED_PREFIX=请填写路由前缀
-PREFIX_LENGTH=64
-PING_IPV6=请填写ping测试地址
-EOF
+    echo "现在需要配置HE IPv6隧道，请准备好以下信息："
+    echo "1. HE服务器IPv4地址 (从tunnelbroker.net获取)"
+    echo "2. 本机IPv4地址 (服务器的公网IP)"
+    echo "3. HE服务器IPv6地址 (格式: xxxx:xxxx:xxxx:xxxx::1/64)"
+    echo "4. HE分配的IPv6前缀 (格式: xxxx:xxxx:xxxx:xxxx::/64)"
+    echo ""
+    echo -n "按回车键继续配置..."
+    read
+    
+    if ! configure_he_tunnel; then
+        echo "隧道配置失败，请检查输入的信息是否正确"
+        exit 1
     fi
+    
     # 从配置文件读取信息
     if [ -f "$CONFIG_FILE" ]; then
         source "$CONFIG_FILE"
@@ -530,10 +565,11 @@ EOF
     fi
     
     # 创建并启动服务
+    echo "=== 步骤7: 创建系统服务 ==="
     create_service "$ipv6_cidr" "$real_ipv4"
     
     # 显示完成信息
-    echo -e "\n安装完成！使用说明："
+    echo -e "\n🎉 安装完成！使用说明："
     cat << EOF
 
 IPv6代理服务已配置完成。服务详情：
@@ -543,24 +579,15 @@ IPv6代理服务已配置完成。服务详情：
 - 真实IPv4地址：$real_ipv4
 
 管理命令：
-1. 启动服务：
-   systemctl start ipv6proxy
+1. 启动服务：systemctl start ipv6proxy
+2. 设置开机自启：systemctl enable ipv6proxy
+3. 查看服务状态：systemctl status ipv6proxy
+4. 查看服务日志：journalctl -u ipv6proxy -f
+5. 停止服务：systemctl stop ipv6proxy
 
-2. 设置开机自启：
-   systemctl enable ipv6proxy
-
-3. 查看服务状态：
-   systemctl status ipv6proxy
-
-4. 查看服务日志：
-   journalctl -u ipv6proxy -f
-
-5. 停止服务：
-   systemctl stop ipv6proxy
-
-5. 手动测试：
-   cd /root/v6
-   go run cmd/ipv6proxy/main.go -cidr $ipv6_cidr -real-ipv4 $real_ipv4
+手动测试：
+cd /root/v6
+go run cmd/ipv6proxy/main.go -cidr $ipv6_cidr -real-ipv4 $real_ipv4
 
 配置文件位置：
 - 隧道配置：$CONFIG_FILE
@@ -573,23 +600,37 @@ systemctl restart ipv6proxy
 EOF
 
     # 询问是否启动服务
-    read -p "是否现在启动服务？(y/n): " start_service
-    if [[ $start_service == [yY] ]]; then
+    echo -n "是否现在启动服务？(Y/n): "
+    read start_service
+    if [[ ! $start_service =~ ^[Nn]$ ]]; then
         echo "正在启动服务..."
         systemctl start ipv6proxy
+        systemctl enable ipv6proxy
         sleep 2
+        
         if systemctl is-active ipv6proxy >/dev/null 2>&1; then
-            echo "服务已成功启动"
-            systemctl status ipv6proxy
+            echo "✅ 服务已成功启动并设置为开机自启！"
+            echo ""
+            echo "🌐 代理地址："
+            echo "  随机IPv6代理: http://$real_ipv4:100"
+            echo "  真实IPv4代理: http://$real_ipv4:101"
+            echo ""
+            echo "🧪 测试代理："
+            echo "  curl --proxy http://$real_ipv4:100 http://ipv6.icanhazip.com"
+            echo "  curl --proxy http://$real_ipv4:101 http://icanhazip.com"
         else
-            echo "服务启动失败，请检查日志："
-            journalctl -u ipv6proxy -n 50 --no-pager
+            echo "❌ 服务启动失败，请检查日志："
+            echo "journalctl -u ipv6proxy -n 50 --no-pager"
         fi
     fi
 
-    echo -e "\n安装和配置已完成。请检查上述信息，确保所有配置正确。"
-    echo "如有任何问题，请查看系统日志或联系支持。"
-    echo "安装日志保存在：$LOG_FILE"
+    echo -e "\n✅ 安装和配置已完成。请检查上述信息，确保所有配置正确。"
+    echo "📋 安装日志保存在：$LOG_FILE"
+    echo ""
+    echo "如有任何问题，请查看："
+    echo "1. 服务日志: journalctl -u ipv6proxy -f"
+    echo "2. 隧道状态: ip -6 addr show $TUNNEL_NAME"
+    echo "3. 路由信息: ip -6 route show"
 }
 
 # 执行主函数
