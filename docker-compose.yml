@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  ipv6proxy:
+    build: .
+    container_name: ipv6proxy
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    environment:
+      - IPV6_CIDR=${IPV6_CIDR:-2001:470:1f05:17b::/64}
+      - REAL_IPV4=${REAL_IPV4:-1.2.3.4}
+      - RANDOM_IPV6_PORT=${RANDOM_IPV6_PORT:-100}
+      - REAL_IPV4_PORT=${REAL_IPV4_PORT:-101}
+      - PROXY_USERNAME=${PROXY_USERNAME:-}
+      - PROXY_PASSWORD=${PROXY_PASSWORD:-}
+      - VERBOSE=${VERBOSE:-false}
+    volumes:
+      - ./logs:/var/log/ipv6proxy
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${REAL_IPV4_PORT:-101}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 可选：监控服务
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ipv6proxy-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ipv6proxy-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    profiles:
+      - monitoring
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+        - subnet: 2001:db8::/32
