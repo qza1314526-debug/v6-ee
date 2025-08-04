@@ -22,7 +22,7 @@ func init() {
 func generateRandomIPv6(cidr string) (net.IP, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid CIDR: %w", err)
 	}
 
 	ip := make(net.IP, net.IPv6len)
@@ -30,7 +30,7 @@ func generateRandomIPv6(cidr string) (net.IP, error) {
 
 	// 获取前缀长度
 	prefixLen, _ := ipNet.Mask.Size()
-	
+
 	// 计算需要随机化的字节数
 	hostBits := 128 - prefixLen
 	if hostBits <= 0 {
@@ -127,12 +127,26 @@ func NewProxyServerWithSpecificIP(cfg *config.Config, useRandomIPv6 bool, specif
 				log.Printf("CONNECT: %s [%s] from %s (CIDR: %s)", req.URL.Host, targetIP, outgoingIP.String(), cfg.CIDR)
 			} else {
 				outgoingIP = net.ParseIP(specificIPv4)
+				if outgoingIP == nil {
+					log.Printf("Invalid IPv4 address: %s", specificIPv4)
+					client.Write([]byte(fmt.Sprintf("%s 500 Internal Server Error\r\n\r\n", req.Proto)))
+					client.Close()
+					return
+				}
 				log.Printf("CONNECT: %s from IPv4 %s", req.URL.Host, outgoingIP.String())
 			}
 
-			dialer := &net.Dialer{
-				LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
-				Timeout:   30 * time.Second,
+			var dialer *net.Dialer
+			if useRandomIPv6 {
+				dialer = &net.Dialer{
+					LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
+					Timeout:   30 * time.Second,
+				}
+			} else {
+				dialer = &net.Dialer{
+					LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
+					Timeout:   30 * time.Second,
+				}
 			}
 
 			server, err := dialer.Dial("tcp", req.URL.Host)
@@ -173,12 +187,24 @@ func NewProxyServerWithSpecificIP(cfg *config.Config, useRandomIPv6 bool, specif
 				log.Printf("HTTP: %s [%s] from %s (CIDR: %s)", req.URL.Host, targetIP, outgoingIP.String(), cfg.CIDR)
 			} else {
 				outgoingIP = net.ParseIP(specificIPv4)
+				if outgoingIP == nil {
+					log.Printf("Invalid IPv4 address: %s", specificIPv4)
+					return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusInternalServerError, "Invalid IPv4 address")
+				}
 				log.Printf("HTTP: %s from IPv4 %s", req.URL.Host, outgoingIP.String())
 			}
 
-			dialer := &net.Dialer{
-				LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
-				Timeout:   30 * time.Second,
+			var dialer *net.Dialer
+			if useRandomIPv6 {
+				dialer = &net.Dialer{
+					LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
+					Timeout:   30 * time.Second,
+				}
+			} else {
+				dialer = &net.Dialer{
+					LocalAddr: &net.TCPAddr{IP: outgoingIP, Port: 0},
+					Timeout:   30 * time.Second,
+				}
 			}
 
 			transport := &http.Transport{

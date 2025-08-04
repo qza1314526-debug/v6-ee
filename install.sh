@@ -248,10 +248,16 @@ detect_server_ipv4() {
     print_message $BLUE "正在检测服务器IPv4地址..."
     
     # 获取所有网卡的IPv4地址
-    local all_ips=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1'))
+    local all_ips=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | sort -u))
     
     # 尝试获取公网IP
-    local public_ip=$(curl -s -4 --connect-timeout 5 ifconfig.me 2>/dev/null || curl -s -4 --connect-timeout 5 icanhazip.com 2>/dev/null || echo "")
+    local public_ip=""
+    for service in "ifconfig.me" "icanhazip.com" "ipinfo.io/ip"; do
+        public_ip=$(curl -s -4 --connect-timeout 5 "$service" 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || echo "")
+        if [[ -n "$public_ip" ]]; then
+            break
+        fi
+    done
     
     print_message $CYAN "检测到的IPv4地址："
     local i=1
@@ -273,7 +279,8 @@ configure_multi_ipv4() {
     print_message $PURPLE "=== 多IPv4代理配置 ==="
     
     # 检测可用IP
-    local available_ips=($(detect_server_ipv4))
+    local available_ips_output=$(detect_server_ipv4)
+    local available_ips=($(echo "$available_ips_output" | tail -n 1))
     
     if [ ${#available_ips[@]} -eq 0 ]; then
         print_message $RED "错误: 未检测到可用的IPv4地址"
@@ -296,14 +303,29 @@ configure_multi_ipv4() {
             for i in "${!available_ips[@]}"; do
                 echo "  $((i+1))) ${available_ips[i]}"
             done
+            echo "  $((${#available_ips[@]}+1))) 手动输入IP地址"
             echo -n "请选择要使用的IPv4地址 [1]: "
             read ip_choice
             ip_choice=${ip_choice:-1}
             
-            if [[ $ip_choice =~ ^[0-9]+$ ]] && [ $ip_choice -ge 1 ] && [ $ip_choice -le ${#available_ips[@]} ]; then
-                SINGLE_IPV4="${available_ips[$((ip_choice-1))]}"
-                print_message $GREEN "选择的IPv4地址: $SINGLE_IPV4"
-                break
+            if [[ $ip_choice =~ ^[0-9]+$ ]]; then
+                if [ $ip_choice -ge 1 ] && [ $ip_choice -le ${#available_ips[@]} ]; then
+                    SINGLE_IPV4="${available_ips[$((ip_choice-1))]}"
+                    print_message $GREEN "选择的IPv4地址: $SINGLE_IPV4"
+                    break
+                elif [ $ip_choice -eq $((${#available_ips[@]}+1)) ]; then
+                    echo -n "请输入IPv4地址: "
+                    read manual_ip
+                    if validate_ipv4 "$manual_ip"; then
+                        SINGLE_IPV4="$manual_ip"
+                        print_message $GREEN "选择的IPv4地址: $SINGLE_IPV4"
+                        break
+                    else
+                        print_message $RED "无效的IPv4地址格式"
+                    fi
+                else
+                    print_message $RED "无效选择，请重新输入"
+                fi
             else
                 print_message $RED "无效选择，请重新输入"
             fi
@@ -329,12 +351,14 @@ configure_multi_ipv4() {
             done
             echo "  $((i+1))) ${available_ips[i]}$status"
         done
+        echo "  $((${#available_ips[@]}+1))) 手动添加IP地址"
         
         echo ""
         print_message $GREEN "已选择的IP地址: ${MULTI_IPV4_ARRAY[@]}"
         echo ""
         print_message $CYAN "选项："
         echo "  1-${#available_ips[@]}) 选择/取消选择IP地址"
+        echo "  $((${#available_ips[@]}+1))) 手动添加IP地址"
         echo "  d) 完成选择"
         echo "  q) 退出"
         
@@ -363,6 +387,27 @@ configure_multi_ipv4() {
                         # 添加选择
                         MULTI_IPV4_ARRAY+=("$selected_ip")
                         print_message $GREEN "已选择: $selected_ip"
+                    fi
+                elif [ $choice -eq $((${#available_ips[@]}+1)) ]; then
+                    echo -n "请输入IPv4地址: "
+                    read manual_ip
+                    if validate_ipv4 "$manual_ip"; then
+                        # 检查是否已存在
+                        local exists=false
+                        for existing_ip in "${MULTI_IPV4_ARRAY[@]}"; do
+                            if [[ "$existing_ip" == "$manual_ip" ]]; then
+                                exists=true
+                                break
+                            fi
+                        done
+                        if [ "$exists" = false ]; then
+                            MULTI_IPV4_ARRAY+=("$manual_ip")
+                            print_message $GREEN "已添加: $manual_ip"
+                        else
+                            print_message $YELLOW "IP地址已存在: $manual_ip"
+                        fi
+                    else
+                        print_message $RED "无效的IPv4地址格式"
                     fi
                 else
                     print_message $RED "无效选择"
@@ -427,6 +472,7 @@ optimize_system_config() {
         ["net.ipv4.ip_forward"]="1"
         ["net.ipv6.conf.all.forwarding"]="1"
         ["net.ipv6.conf.all.proxy_ndp"]="1"
+        ["net.ipv6.ip_nonlocal_bind"]="1"
         ["net.ipv4.neigh.default.gc_thresh1"]="1024"
         ["net.ipv4.neigh.default.gc_thresh2"]="2048"
         ["net.ipv4.neigh.default.gc_thresh3"]="4096"
@@ -447,7 +493,9 @@ optimize_system_config() {
     
     if [ $need_reload -eq 1 ]; then
         print_message $BLUE "重新加载系统参数..."
-        sysctl -p &>/dev/null
+        if ! sysctl -p &>/dev/null; then
+            print_message $YELLOW "警告: 部分系统参数加载失败，但继续安装..."
+        fi
     fi
     print_message $GREEN "系统配置优化完成"
 }
@@ -592,17 +640,25 @@ configure_he_tunnel() {
 
     # 配置隧道
     print_message $BLUE "正在配置隧道..."
-    ip tunnel add $TUNNEL_NAME mode sit remote $he_ipv4 local $local_ipv4 ttl 255 || {
-        print_message $RED "创建隧道失败"
-        return 1
+    ip tunnel add $TUNNEL_NAME mode sit remote $he_ipv4 local $local_ipv4 ttl 255 2>/dev/null || {
+        print_message $YELLOW "隧道可能已存在，尝试删除后重新创建..."
+        ip tunnel del $TUNNEL_NAME 2>/dev/null || true
+        ip tunnel add $TUNNEL_NAME mode sit remote $he_ipv4 local $local_ipv4 ttl 255 || {
+            print_message $RED "创建隧道失败"
+            return 1
+        }
     }
 
     ip link set $TUNNEL_NAME up
-    ip addr add ${local_ipv6} dev $TUNNEL_NAME
-    ip addr add ${ping_ipv6}/${prefix_length} dev $TUNNEL_NAME
-    ip -6 route add ${routed_prefix}/${prefix_length} dev $TUNNEL_NAME
-    ip -6 route add ::/0 via ${he_ipv6%/*} dev $TUNNEL_NAME
+    ip addr add ${local_ipv6} dev $TUNNEL_NAME 2>/dev/null || true
+    ip addr add ${ping_ipv6}/${prefix_length} dev $TUNNEL_NAME 2>/dev/null || true
+    ip -6 route add ${routed_prefix}/${prefix_length} dev $TUNNEL_NAME 2>/dev/null || true
+    ip -6 route add ::/0 via ${he_ipv6%/*} dev $TUNNEL_NAME 2>/dev/null || true
     ip link set $TUNNEL_NAME mtu 1480
+
+    # 添加本地路由以支持IPv6代理
+    print_message $BLUE "配置IPv6本地路由..."
+    ip -6 route add local ${routed_prefix}/${prefix_length} dev lo 2>/dev/null || true
 
     # 保存配置
     cat > "$CONFIG_FILE" << EOF
@@ -631,6 +687,7 @@ iface $TUNNEL_NAME inet6 v4tunnel
     up ip -6 addr add ${ping_ipv6}/${prefix_length} dev \$IFACE
     up ip -6 route add ${routed_prefix}/${prefix_length} dev \$IFACE
     up ip -6 route add ::/0 via ${he_ipv6%/*} dev \$IFACE
+    up ip -6 route add local ${routed_prefix}/${prefix_length} dev lo
 # End IPv6 Tunnel
 EOF
 
@@ -751,27 +808,36 @@ main() {
     init_environment
     check_root
     check_network
+    print_message $GREEN "步骤1完成"
     
     # 先安装基本工具
     print_message $PURPLE "=== 步骤2: 安装基本工具 ==="
     install_basic_tools
+    print_message $GREEN "步骤2完成"
     
     # 安装Go
     print_message $PURPLE "=== 步骤3: 安装Go语言 ==="
     install_go
+    print_message $GREEN "步骤3完成"
     
     # 克隆代码
     print_message $PURPLE "=== 步骤4: 获取项目代码 ==="
     clone_or_update_repo
+    print_message $GREEN "步骤4完成"
     
     # 继续其他配置
     print_message $PURPLE "=== 步骤5: 系统配置 ==="
     check_system_memory
     optimize_system_config
+    print_message $GREEN "步骤5完成"
     
     # 配置多IPv4代理
     print_message $PURPLE "=== 步骤6: 配置IPv4代理 ==="
-    configure_multi_ipv4
+    if ! configure_multi_ipv4; then
+        print_message $RED "IPv4配置失败"
+        exit 1
+    fi
+    print_message $GREEN "步骤6完成"
     
     # 配置HE IPv6隧道
     print_message $PURPLE "=== 步骤7: 配置IPv6隧道 ==="
@@ -788,6 +854,7 @@ main() {
         print_message $RED "隧道配置失败，请检查输入的信息是否正确"
         exit 1
     fi
+    print_message $GREEN "步骤7完成"
     
     # 从配置文件读取信息
     if [ -f "$CONFIG_FILE" ]; then
@@ -801,6 +868,7 @@ main() {
     # 创建并启动服务
     print_message $PURPLE "=== 步骤8: 创建系统服务 ==="
     create_service "$ipv6_cidr"
+    print_message $GREEN "步骤8完成"
     
     # 显示完成信息
     show_completion_info "$ipv6_cidr"
@@ -839,6 +907,14 @@ main() {
             else
                 echo "  curl --proxy http://$SINGLE_IPV4:101 http://icanhazip.com"
             fi
+            
+            # 添加故障排除提示
+            echo ""
+            print_message $YELLOW "如果IPv6代理无法工作，请尝试以下命令修复："
+            echo "1. 添加本地路由: ip -6 route add local $ipv6_cidr dev lo"
+            echo "2. 检查系统参数: sysctl net.ipv6.ip_nonlocal_bind"
+            echo "3. 重启服务: systemctl restart ipv6proxy"
+            
         else
             print_message $RED "❌ 服务启动失败，请检查日志："
             echo "journalctl -u ipv6proxy -n 50 --no-pager"
@@ -856,4 +932,4 @@ main() {
 }
 
 # 执行主函数
-main
+main "$@"
