@@ -82,6 +82,13 @@ func NewProxyServer(cfg *config.Config, useRandomIPv6 bool) *goproxy.ProxyHttpSe
 }
 
 func NewProxyServerWithSpecificIP(cfg *config.Config, useRandomIPv6 bool, specificIPv4 string) *goproxy.ProxyHttpServer {
+	// 验证IPv4地址是否存在于系统中
+	if !useRandomIPv6 && specificIPv4 != "" {
+		if !isIPAddressAvailable(specificIPv4) {
+			log.Printf("Warning: IPv4 address %s may not be available on this system", specificIPv4)
+		}
+	}
+
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Verbose = cfg.Verbose
 
@@ -128,7 +135,7 @@ func NewProxyServerWithSpecificIP(cfg *config.Config, useRandomIPv6 bool, specif
 			} else {
 				outgoingIP = net.ParseIP(specificIPv4)
 				if outgoingIP == nil {
-					log.Printf("Invalid IPv4 address: %s", specificIPv4)
+					log.Printf("Invalid or unavailable IPv4 address: %s", specificIPv4)
 					client.Write([]byte(fmt.Sprintf("%s 500 Internal Server Error\r\n\r\n", req.Proto)))
 					client.Close()
 					return
@@ -188,7 +195,7 @@ func NewProxyServerWithSpecificIP(cfg *config.Config, useRandomIPv6 bool, specif
 			} else {
 				outgoingIP = net.ParseIP(specificIPv4)
 				if outgoingIP == nil {
-					log.Printf("Invalid IPv4 address: %s", specificIPv4)
+					log.Printf("Invalid or unavailable IPv4 address: %s", specificIPv4)
 					return req, goproxy.NewResponse(req, goproxy.ContentTypeText, http.StatusInternalServerError, "Invalid IPv4 address")
 				}
 				log.Printf("HTTP: %s from IPv4 %s", req.URL.Host, outgoingIP.String())
@@ -255,4 +262,34 @@ func copyData(dst, src net.Conn) {
 	defer dst.Close()
 	defer src.Close()
 	io.Copy(dst, src)
+}
+
+// 检查IP地址是否在系统中可用
+func isIPAddressAvailable(ipAddr string) bool {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+
+	for _, iface := range interfaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+
+			if ip != nil && ip.String() == ipAddr {
+				return true
+			}
+		}
+	}
+	return false
 }
